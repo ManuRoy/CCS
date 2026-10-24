@@ -1,10 +1,20 @@
 
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'maven:3.9-eclipse-temurin-21'
+            args '-v maven-repo:/root/.m2'
+        }
+    }
 
     options {
         timestamps()
         timeout(time: 20, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(
+            numToKeepStr: '10',
+            artifactNumToKeepStr: '5'
+        ))
     }
 
     stages {
@@ -14,32 +24,46 @@ pipeline {
             }
         }
 
+        stage('Verify Build Tools') {
+            steps {
+                sh 'java -version'
+                sh 'mvn -version'
+            }
+        }
+
         stage('Build and Test') {
             steps {
-                sh '''
-                    java -version
-                    mvn -version
-                    mvn -B clean verify
-                '''
+                sh 'mvn -B clean verify'
             }
             post {
                 always {
-                    junit testResults: '**/target/surefire-reports/*.xml',
-                          allowEmptyResults: true
+                    junit(
+                        testResults: '**/target/surefire-reports/*.xml',
+                        allowEmptyResults: true
+                    )
                 }
+            }
+        }
+
+        stage('Archive Artifact') {
+            steps {
+                archiveArtifacts(
+                    artifacts: 'target/*.jar',
+                    fingerprint: true
+                )
             }
         }
     }
 
     post {
         success {
-            echo 'Build and tests completed successfully.'
+            echo 'SUCCESS: Application built and verified.'
         }
         failure {
-            echo 'Pipeline failed. Check the stage logs.'
+            echo 'FAILURE: Check the stage logs in Console Output.'
         }
         always {
-            echo 'Pipeline execution finished.'
+            echo 'Pipeline execution completed.'
         }
     }
 }
