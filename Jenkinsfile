@@ -1,15 +1,9 @@
-
 pipeline {
-    agent {
-        docker {
-            image 'maven:3.9-eclipse-temurin-21'
-            args '-u root:root'
-        }
-    }
+    agent none
 
     options {
         timestamps()
-        timeout(time: 20, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')
         disableConcurrentBuilds()
         buildDiscarder(logRotator(
             numToKeepStr: '10',
@@ -19,6 +13,12 @@ pipeline {
 
     stages {
         stage('Verify Build Tools') {
+            agent {
+                docker {
+                    image 'maven:3.9-eclipse-temurin-21'
+                    args '-u root:root'
+                }
+            }
             steps {
                 sh 'java -version'
                 sh 'mvn -version'
@@ -26,6 +26,12 @@ pipeline {
         }
 
         stage('Build and Test') {
+            agent {
+                docker {
+                    image 'maven:3.9-eclipse-temurin-21'
+                    args '-u root:root'
+                }
+            }
             steps {
                 sh 'mvn -B clean verify'
             }
@@ -40,6 +46,12 @@ pipeline {
         }
 
         stage('Archive Artifact') {
+            agent {
+                docker {
+                    image 'maven:3.9-eclipse-temurin-21'
+                    args '-u root:root'
+                }
+            }
             steps {
                 archiveArtifacts(
                     artifacts: 'target/*.jar',
@@ -47,17 +59,27 @@ pipeline {
                 )
             }
         }
+
+        stage('Build Docker Image') {
+            agent any
+            steps {
+                sh 'docker --version'
+                sh 'docker build -t connected-vehicle-platform:latest .'
+                sh 'docker images connected-vehicle-platform'
+            }
+        }
     }
 
     post {
         success {
-            echo 'SUCCESS: Application built and verified.'
+            echo 'SUCCESS: Build, tests, artifact archiving, and Docker image creation completed.'
         }
         failure {
-            echo 'FAILURE: Check the stage logs in Console Output.'
+            echo 'FAILURE: Check the failed stage in Console Output.'
         }
         always {
             echo 'Pipeline execution completed.'
         }
     }
 }
+
