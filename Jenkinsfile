@@ -3,7 +3,7 @@ pipeline {
     agent {
         docker {
             image 'maven:3.9-eclipse-temurin-21'
-            args '-v $WORKSPACE/.m2:/tmp/maven-repo'
+            args '-u root:root'
         }
     }
 
@@ -27,7 +27,7 @@ pipeline {
 
         stage('Build and Test') {
             steps {
-                sh 'mvn -B -Dmaven.repo.local=/tmp/maven-repo clean verify'
+                sh 'mvn -B clean verify'
             }
             post {
                 always {
@@ -61,4 +61,3 @@ pipeline {
         }
     }
 }
-
