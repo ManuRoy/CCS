@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: connected-vehicle-api
+  namespace: connected-vehicle
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: connected-vehicle-api
+  template:
+    metadata:
+      labels:
+        app: connected-vehicle-api
+    spec:
+      containers:
+        - name: api
+          image: YOUR_ACR_NAME.azurecr.io/connected-vehicle-platform:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: vehicle-db
+                  key: jdbc-url
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: vehicle-db
+                  key: username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vehicle-db
+                  key: password
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 25
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 45
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: connected-vehicle-api
+  namespace: connected-vehicle
+spec:
+  selector:
+    app: connected-vehicle-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP

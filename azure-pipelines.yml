@@ -1,0 +1,36 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  imageRepository: connected-vehicle-platform
+  dockerfilePath: Dockerfile
+  tag: $(Build.BuildId)
+
+stages:
+  - stage: BuildAndTest
+    displayName: Build and test
+    jobs:
+      - job: MavenBuild
+        steps:
+          - task: JavaToolInstaller@0
+            inputs:
+              versionSpec: '21'
+              jdkArchitectureOption: x64
+              jdkSourceOption: PreInstalled
+          - script: mvn -B clean verify
+            displayName: Maven verify
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              failTaskOnFailedTests: true
+
+  # Add Docker@2 buildAndPush with a configured service connection after
+  # creating Azure Container Registry. Add an AKS deploy stage only after
+  # configuring an Azure Resource Manager service connection and Kubernetes access.

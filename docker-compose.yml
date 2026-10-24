@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vehicle_platform
+      POSTGRES_USER: vehicle_app
+      POSTGRES_PASSWORD: vehicle_dev_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vehicle_app -d vehicle_platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/vehicle_platform
+      SPRING_DATASOURCE_USERNAME: vehicle_app
+      SPRING_DATASOURCE_PASSWORD: vehicle_dev_password
+    ports:
+      - "8070:8070"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  simulator:
+    build: ./simulator
+    environment:
+      API_BASE_URL: http://api:8080
+      INTERVAL_SECONDS: "5"
+    depends_on:
+      - api
+    profiles: ["simulator"]
+
+volumes:
+  postgres_data:
