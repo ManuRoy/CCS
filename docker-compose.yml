@@ -20,7 +20,7 @@ services:
       SPRING_DATASOURCE_USERNAME: vehicle_app
       SPRING_DATASOURCE_PASSWORD: vehicle_dev_password
     ports:
-      - "8070:8070"
+      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy

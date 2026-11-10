@@ -1,36 +1,192 @@
+
+# ============================================================
+# Connected Vehicle Platform - Azure CI/CD Pipeline
+# Build -> Test -> Docker Build -> ACR Push -> VM Deployment
+# ============================================================
+
 trigger:
   branches:
     include:
       - main
+      - feature/*
 
 pool:
   vmImage: ubuntu-latest
 
+# ------------------------------------------------------------
+# Global Variables
+# ------------------------------------------------------------
+
 variables:
-  imageRepository: connected-vehicle-platform
-  dockerfilePath: Dockerfile
-  tag: $(Build.BuildId)
+  javaVersion: '21'
+
+  imageRepository: 'connected-vehicle-platform'
+  dockerfilePath: 'Dockerfile'
+  imageTag: '$(Build.BuildId)'
+
+  # Azure Container Registry configuration
+  acrServiceConnection: 'sc-evp-acr'
+  acrName: 'manuvehiclef0d03a32'
+  acrLoginServer: 'manuvehiclef0d03a32.azurecr.io'
+
+  # VM deployment configuration
+  vmSshServiceConnection: 'sc-evp-prod-vm-ssh'
+  containerName: 'ccs-api'
+  appPort: '8080'
+
+  # Keep false until VM and SSH service connection are ready
+  deployToVm: 'false'
+
+
+# ============================================================
+# STAGE 1 - BUILD AND TEST
+# ============================================================
 
 stages:
-  - stage: BuildAndTest
-    displayName: Build and test
-    jobs:
-      - job: MavenBuild
-        steps:
-          - task: JavaToolInstaller@0
-            inputs:
-              versionSpec: '21'
-              jdkArchitectureOption: x64
-              jdkSourceOption: PreInstalled
-          - script: mvn -B clean verify
-            displayName: Maven verify
-          - task: PublishTestResults@2
-            condition: succeededOrFailed()
-            inputs:
-              testResultsFormat: JUnit
-              testResultsFiles: '**/surefire-reports/TEST-*.xml'
-              failTaskOnFailedTests: true
 
-  # Add Docker@2 buildAndPush with a configured service connection after
-  # creating Azure Container Registry. Add an AKS deploy stage only after
-  # configuring an Azure Resource Manager service connection and Kubernetes access.
+- stage: BuildAndTest
+  displayName: 'Build and Test Application'
+
+  jobs:
+  - job: MavenBuild
+    displayName: 'Maven Build'
+
+    steps:
+
+    - checkout: self
+
+    # Install Java 21
+    - task: JavaToolInstaller@0
+      displayName: 'Configure Java 21'
+      inputs:
+        versionSpec: '21'
+        jdkArchitectureOption: 'x64'
+        jdkSourceOption: 'PreInstalled'
+
+    # Build and execute unit tests
+    - task: Maven@4
+      displayName: 'Maven Clean Verify'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'clean verify'
+        options: '-B'
+        publishJUnitResults: false
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '1.21'
+        mavenVersionOption: 'Default'
+
+    # Publish test results
+    - task: PublishTestResults@2
+      displayName: 'Publish Unit Test Results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+        searchFolder: '$(System.DefaultWorkingDirectory)'
+        failTaskOnFailedTests: true
+        testRunTitle: 'CCS Unit Tests'
+
+
+# ============================================================
+# STAGE 2 - BUILD AND PUSH DOCKER IMAGE
+# ============================================================
+
+- stage: BuildAndPush
+  displayName: 'Build and Push Docker Image'
+
+  dependsOn: BuildAndTest
+
+  condition: succeeded()
+
+  jobs:
+  - job: DockerBuild
+    displayName: 'Docker Build and ACR Push'
+
+    steps:
+
+    - checkout: self
+
+    # Build Docker image and push to ACR
+    - task: Docker@2
+      displayName: 'Build and Push Image to ACR'
+      inputs:
+        command: 'buildAndPush'
+        containerRegistry: '$(acrServiceConnection)'
+        repository: '$(imageRepository)'
+        Dockerfile: '$(dockerfilePath)'
+        buildContext: '$(Build.SourcesDirectory)'
+        tags: |
+          $(imageTag)
+          latest
+
+
+# ============================================================
+# STAGE 3 - DEPLOY TO AZURE VIRTUAL MACHINE
+# ============================================================
+
+- stage: DeployToVM
+  displayName: 'Deploy to Azure Linux VM'
+
+  dependsOn: BuildAndPush
+
+  # Deployment remains disabled until explicitly enabled
+  condition: and(succeeded(), eq(variables['deployToVm'], 'true'))
+
+  jobs:
+  - deployment: DeployCCS
+    displayName: 'Deploy CCS Application'
+
+    environment: 'CCS-Production'
+
+    strategy:
+      runOnce:
+        deploy:
+
+          steps:
+
+          # Connect to VM through SSH
+          - task: SSH@0
+            displayName: 'Deploy Container to Azure VM'
+            inputs:
+              sshEndpoint: '$(vmSshServiceConnection)'
+              runOptions: 'inline'
+              readyTimeout: '20000'
+
+              inline: |
+
+                set -e
+
+                echo "Starting CCS deployment..."
+
+                # ACR image details
+                IMAGE="$(acrLoginServer)/$(imageRepository):$(imageTag)"
+
+                # Authenticate using VM Managed Identity
+                az login --identity
+
+                # Authenticate Docker with ACR
+                az acr login --name "$(acrName)"
+
+                # Pull the latest pipeline image
+                docker pull "$IMAGE"
+
+                # Stop existing application container
+                if docker ps -a --format '{{.Names}}' | grep -qx "$(containerName)"; then
+                  docker stop "$(containerName)" || true
+                  docker rm "$(containerName)" || true
+                fi
+
+                # Start new application container
+                docker run -d \
+                  --name "$(containerName)" \
+                  --restart unless-stopped \
+                  -p $(appPort):8080 \
+                  -e SPRING_DATASOURCE_URL="$SPRING_DATASOURCE_URL" \
+                  -e SPRING_DATASOURCE_USERNAME="$SPRING_DATASOURCE_USERNAME" \
+                  -e SPRING_DATASOURCE_PASSWORD="$SPRING_DATASOURCE_PASSWORD" \
+                  "$IMAGE"
+
+                echo "CCS deployment completed."
+
+                # Display running container
+                docker ps --filter "name=$(containerName)"
